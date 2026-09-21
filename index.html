@@ -184,16 +184,57 @@
   /* Edit mode */
   .editList .row { padding-right: 8px; }
   .editList .edit-open { display: flex; align-items: center; gap: 14px; flex: 1; min-height: 50px; text-align: left; }
-  .arrow {
+  .editList { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .editList:empty { min-height: 60px; border: 2px dashed var(--line); border-radius: 18px; }
+  .cat-section + .cat-section { margin-top: 10px; }
+  .cat-head { display: flex; align-items: center; min-height: 48px; margin: 8px 0 6px; padding: 0 8px 0 4px; }
+  .cat-name {
+    flex: 1; min-height: 44px;
+    display: flex; align-items: center;
+    font-size: 18px; font-weight: 600;
+    color: var(--muted);
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .cat-name.loose { color: var(--faint); font-weight: 500; }
+  .grip {
     flex: none;
     width: 44px; height: 44px;
     border-radius: 12px;
-    color: var(--muted);
+    color: var(--faint);
     display: inline-flex; align-items: center; justify-content: center;
+    touch-action: none;
+    cursor: grab;
   }
-  .arrow svg { width: 22px; height: 22px; }
-  .arrow:disabled { opacity: .25; }
-  .arrow:not(:disabled):active { background: var(--line); }
+  .grip svg { width: 22px; height: 22px; }
+  .placeholder { opacity: .3; }
+  .drag-ghost {
+    position: fixed;
+    z-index: 40;
+    margin: 0;
+    pointer-events: none;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+    transform: scale(1.02);
+    list-style: none;
+  }
+  .drop-line {
+    position: fixed;
+    z-index: 39;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .editList.drop-target { border-color: var(--accent); background: var(--accent-soft); }
+  .cat-section.drag-ghost { background: var(--bg); border-radius: 18px; padding: 0 8px 8px; }
+  body.dragging { -webkit-user-select: none; user-select: none; }
+  body.dragging * { cursor: grabbing !important; }
+
+  .cat-title {
+    font-size: 18px; font-weight: 600;
+    color: var(--muted);
+    margin: 22px 4px 10px;
+  }
 
   .btn {
     display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -330,8 +371,7 @@
   const ICON = {
     pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
-    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    grip: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg>',
     save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>',
     load: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M5 19h14"/></svg>'
   };
@@ -352,6 +392,7 @@
       { id: uid(), name: 'Müll rausbringen', emoji: '🗑️' },
       { id: uid(), name: 'Dinge irgendwo runterholen', emoji: '📦' }
     ],
+    categories: [],
     active: [],
     lastBackup: null
   });
@@ -359,13 +400,26 @@
   // Validate + normalise anything that claims to be a state
   function normalise(s) {
     if (!s || typeof s !== 'object' || !Array.isArray(s.tasks)) return null;
+    const categories = [];
+    const catSeen = new Set();
+    for (const c of Array.isArray(s.categories) ? s.categories : []) {
+      if (!c || typeof c.name !== 'string' || !c.name.trim()) continue;
+      const id = typeof c.id === 'string' && c.id && !catSeen.has(c.id) ? c.id : uid();
+      catSeen.add(id);
+      categories.push({ id, name: c.name.trim().slice(0, 60) });
+    }
     const tasks = [];
     const seen = new Set();
     for (const t of s.tasks) {
       if (!t || typeof t.name !== 'string' || !t.name.trim()) continue;
       const id = typeof t.id === 'string' && t.id && !seen.has(t.id) ? t.id : uid();
       seen.add(id);
-      tasks.push({ id, name: t.name.trim().slice(0, 120), emoji: typeof t.emoji === 'string' ? t.emoji.slice(0, 16) : '' });
+      tasks.push({
+        id,
+        name: t.name.trim().slice(0, 120),
+        emoji: typeof t.emoji === 'string' ? t.emoji.slice(0, 16) : '',
+        cat: catSeen.has(t.cat) ? t.cat : null
+      });
     }
     const active = [];
     const activeSeen = new Set();
@@ -378,6 +432,7 @@
       v: 1,
       updated: Number(s.updated) || 0,
       tasks,
+      categories,
       active,
       lastBackup: typeof s.lastBackup === 'number' ? s.lastBackup : null
     };
@@ -542,13 +597,6 @@
     save(); render();
     toast('Erledigt', true);
   }
-  function move(id, dir) {
-    const i = state.tasks.findIndex(t => t.id === id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= state.tasks.length) return;
-    [state.tasks[i], state.tasks[j]] = [state.tasks[j], state.tasks[i]];
-    save(); render();
-  }
 
   /* ---------- Render ---------- */
   let editMode = false;
@@ -556,6 +604,7 @@
   const editBtn = $('#editBtn');
 
   function render() {
+    if (drag) return; // endDrag re-renders
     // keep focus on a note field across re-renders (e.g. storage sync)
     const focused = document.activeElement && document.activeElement.dataset.noteFor;
 
@@ -660,17 +709,26 @@
     if (!pool.length) {
       frag.append(el('div', { class: 'empty-state', text: state.tasks.length ? 'Alles ist auf der Liste' : 'Noch keine Aufgaben' }));
     } else {
-      const ul = el('ul', { class: 'pool' });
-      for (const t of pool) {
-        ul.append(el('li', { class: 'card' },
-          el('button', { class: 'row', 'aria-label': t.name + ' – auf die Liste', onclick: () => activate(t.id) },
-            emojiNode(t.emoji),
-            el('span', { class: 'name', text: t.name }),
-            el('span', { class: 'mark', html: ICON.plus })
-          )
-        ));
+      const poolList = tasks => {
+        const ul = el('ul', { class: 'pool' });
+        for (const t of tasks) {
+          ul.append(el('li', { class: 'card' },
+            el('button', { class: 'row', 'aria-label': t.name + ' – auf die Liste', onclick: () => activate(t.id) },
+              emojiNode(t.emoji),
+              el('span', { class: 'name', text: t.name }),
+              el('span', { class: 'mark', html: ICON.plus })
+            )
+          ));
+        }
+        return ul;
+      };
+      const loose = pool.filter(t => !t.cat);
+      if (loose.length) frag.append(poolList(loose));
+      for (const c of state.categories) {
+        const inCat = pool.filter(t => t.cat === c.id);
+        if (!inCat.length) continue;
+        frag.append(el('h3', { class: 'cat-title', text: c.name }), poolList(inCat));
       }
-      frag.append(ul);
     }
     return frag;
   }
@@ -679,25 +737,38 @@
     const frag = document.createDocumentFragment();
     frag.append(el('h2', { text: 'Aufgaben' }));
 
-    if (state.tasks.length) {
-      const ul = el('ul', { class: 'editList' });
-      state.tasks.forEach((t, i) => {
-        ul.append(el('li', { class: 'card' },
-          el('div', { class: 'row' },
-            el('button', { class: 'edit-open', 'aria-label': t.name + ' bearbeiten', onclick: () => openTaskSheet(t) },
-              emojiNode(t.emoji),
-              el('span', { class: 'name', text: t.name })
-            ),
-            el('button', { class: 'arrow', html: ICON.up, 'aria-label': 'Nach oben', disabled: i === 0, onclick: () => move(t.id, -1) }),
-            el('button', { class: 'arrow', html: ICON.down, 'aria-label': 'Nach unten', disabled: i === state.tasks.length - 1, onclick: () => move(t.id, 1) })
-          )
+    const hasCats = state.categories.length > 0;
+    const sections = [{ id: null, name: 'Ohne Kategorie' }, ...state.categories];
+    for (const c of sections) {
+      const tasks = state.tasks.filter(t => (t.cat || null) === c.id);
+      const sec = el('section', { class: 'cat-section' + (c.id ? ' movable' : ''), 'data-cat': c.id || '' });
+      if (c.id) {
+        sec.append(el('div', { class: 'cat-head' },
+          el('button', { class: 'cat-name', text: c.name, 'aria-label': 'Kategorie ' + c.name + ' bearbeiten', onclick: () => openCatSheet(c) }),
+          el('button', { class: 'grip', html: ICON.grip, 'aria-label': 'Kategorie verschieben', onpointerdown: e => startDrag(e, sec, 'cat') })
         ));
-      });
-      frag.append(ul);
+      } else if (hasCats) {
+        sec.append(el('div', { class: 'cat-head' }, el('span', { class: 'cat-name loose', text: c.name })));
+      }
+      const ul = el('ul', { class: 'editList' });
+      for (const t of tasks) {
+        const li = el('li', { class: 'card', 'data-id': t.id });
+        li.append(el('div', { class: 'row' },
+          el('button', { class: 'edit-open', 'aria-label': t.name + ' bearbeiten', onclick: () => openTaskSheet(t) },
+            emojiNode(t.emoji),
+            el('span', { class: 'name', text: t.name })
+          ),
+          el('button', { class: 'grip', html: ICON.grip, 'aria-label': 'Verschieben', onpointerdown: e => startDrag(e, li, 'task') })
+        ));
+        ul.append(li);
+      }
+      sec.append(ul);
+      frag.append(sec);
     }
 
-    frag.append(el('div', { style: 'margin-top:10px' },
-      el('button', { class: 'btn dashed', onclick: () => openTaskSheet(null), html: ICON.plus + '<span>Neue Aufgabe</span>' })
+    frag.append(el('div', { class: 'btn-row two', style: 'margin-top:18px' },
+      el('button', { class: 'btn dashed', onclick: () => openTaskSheet(null), html: ICON.plus + '<span>Aufgabe</span>' }),
+      el('button', { class: 'btn dashed', onclick: () => openCatSheet(null), html: ICON.plus + '<span>Kategorie</span>' })
     ));
 
     frag.append(el('h2', { text: 'Backup' }));
@@ -716,6 +787,117 @@
     render();
     window.scrollTo(0, 0);
   });
+
+  /* ---------- Drag & drop (edit mode) ---------- */
+  // Custom pointer-based drag: HTML5 drag-and-drop doesn't work with touch on iOS.
+  // Layout stays frozen while dragging (a floating clone follows the finger and a line marks the
+  // drop spot); the element only moves on release. Moving it live shifts everything and overshoots.
+  let drag = null;
+  const dropLine = el('div', { class: 'drop-line hidden' });
+  document.body.append(dropLine);
+
+  function startDrag(e, item, kind) {
+    if (drag || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    const r = item.getBoundingClientRect();
+    const ghost = item.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    Object.assign(ghost.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px' });
+    document.body.append(ghost);
+    item.classList.add('placeholder');
+    document.body.classList.add('dragging');
+    drag = { item, kind, ghost, offY: e.clientY - r.top, x: e.clientX, y: e.clientY, pid: e.pointerId, raf: 0 };
+    window.addEventListener('pointermove', onDragMove, { passive: false });
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    drag.raf = requestAnimationFrame(autoScroll);
+    placeDrag();
+  }
+
+  function onDragMove(e) {
+    if (!drag || e.pointerId !== drag.pid) return;
+    e.preventDefault();
+    drag.x = e.clientX; drag.y = e.clientY;
+    drag.ghost.style.top = (drag.y - drag.offY) + 'px';
+    placeDrag();
+  }
+
+  // Work out where the item would land: { parent list, the node to insert before (null = end) }
+  function placeDrag() {
+    const { item, kind, y } = drag;
+    const mid = n => { const r = n.getBoundingClientRect(); return r.top + r.height / 2; };
+    main.querySelectorAll('.drop-target').forEach(n => n.classList.remove('drop-target'));
+    drag.drop = null;
+
+    let others, lineY = null;
+    if (kind === 'task') {
+      // the section the finger is in (or nearest below it)
+      const secs = [...main.querySelectorAll('.cat-section')];
+      const sec = secs.find(s => y < s.getBoundingClientRect().bottom + 5) || secs[secs.length - 1];
+      if (!sec) return;
+      const ul = sec.querySelector('.editList');
+      others = [...ul.children].filter(li => li !== item);
+      const i = others.filter(li => mid(li) < y).length;
+      drag.drop = { parent: ul, before: others[i] || null };
+      if (!others.length) ul.classList.add('drop-target');
+      else lineY = i < others.length ? others[i].getBoundingClientRect().top - 5 : others[i - 1].getBoundingClientRect().bottom + 5;
+    } else {
+      others = [...main.querySelectorAll('.cat-section.movable')].filter(s => s !== item);
+      if (!others.length) return;
+      const i = others.filter(s => mid(s) < y).length;
+      drag.drop = { parent: item.parentNode, before: others[i] || others[others.length - 1].nextSibling, catIndex: i };
+      lineY = i < others.length ? others[i].getBoundingClientRect().top - 5 : others[i - 1].getBoundingClientRect().bottom + 5;
+    }
+
+    if (lineY == null) { dropLine.classList.add('hidden'); return; }
+    const r = main.getBoundingClientRect();
+    Object.assign(dropLine.style, { top: (lineY - 2) + 'px', left: r.left + 'px', width: r.width + 'px' });
+    dropLine.classList.remove('hidden');
+  }
+
+  function autoScroll() {
+    if (!drag) return;
+    const edge = 90;
+    let dy = 0;
+    if (drag.y < edge) dy = -Math.ceil((edge - drag.y) / 5);
+    else if (drag.y > innerHeight - edge) dy = Math.ceil((drag.y - (innerHeight - edge)) / 5);
+    if (dy) { window.scrollBy(0, dy); placeDrag(); }
+    drag.raf = requestAnimationFrame(autoScroll);
+  }
+
+  function endDrag(e) {
+    if (!drag || (e && e.pointerId !== drag.pid)) return;
+    const { item, kind, ghost, raf, drop } = drag;
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', endDrag);
+    window.removeEventListener('pointercancel', endDrag);
+    ghost.remove();
+    dropLine.classList.add('hidden');
+    item.classList.remove('placeholder');
+    document.body.classList.remove('dragging');
+    drag = null;
+    if (!drop || (e && e.type === 'pointercancel')) { render(); return; }
+    drop.parent.insertBefore(item, drop.before);
+
+    // Read the new order straight from the DOM
+    if (kind === 'task') {
+      const next = [];
+      main.querySelectorAll('.cat-section').forEach(sec => {
+        const cat = sec.dataset.cat || null;
+        sec.querySelectorAll('.editList > li').forEach(li => {
+          const t = taskById(li.dataset.id);
+          if (t) { t.cat = cat; next.push(t); }
+        });
+      });
+      if (next.length === state.tasks.length) state.tasks = next;
+    } else {
+      const order = [...main.querySelectorAll('.cat-section.movable')].map(sec => sec.dataset.cat);
+      const next = order.map(id => state.categories.find(c => c.id === id)).filter(Boolean);
+      if (next.length === state.categories.length) state.categories = next;
+    }
+    save(); render();
+  }
 
   /* ---------- Sheets ---------- */
   let sheetBackdrop = null;
@@ -779,6 +961,51 @@
     openSheet(el('div', {},
       el('h3', { text: isNew ? 'Neue Aufgabe' : 'Aufgabe bearbeiten' }),
       el('div', { class: 'fields' }, emojiIn, nameIn),
+      actions
+    ));
+    if (isNew) setTimeout(() => nameIn.focus(), 60);
+  }
+
+  function openCatSheet(cat) {
+    const isNew = !cat;
+    const nameIn = el('input', { class: 'field', type: 'text', placeholder: 'Kategorie', 'aria-label': 'Name der Kategorie', autocomplete: 'off', enterkeyhint: 'done', maxlength: '60' });
+    nameIn.value = cat ? cat.name : '';
+    const saveBtn = el('button', { class: 'btn primary', text: 'Speichern' });
+    const upd = () => { saveBtn.disabled = !nameIn.value.trim(); };
+    nameIn.addEventListener('input', upd);
+    upd();
+
+    const doSave = () => {
+      const name = nameIn.value.trim();
+      if (!name) return;
+      if (isNew) state.categories.push({ id: uid(), name });
+      else { const c = state.categories.find(x => x.id === cat.id); if (c) c.name = name; }
+      save(); closeSheet(); render();
+    };
+    saveBtn.addEventListener('click', doSave);
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') doSave(); });
+
+    const hint = el('p', { class: 'hidden', text: 'Die Aufgaben darin bleiben erhalten.' });
+    const actions = el('div', { class: 'btn-row' }, saveBtn);
+    if (!isNew) {
+      let armed = false;
+      const del = el('button', { class: 'btn danger', text: 'Löschen' });
+      del.addEventListener('click', () => {
+        if (!armed) { armed = true; del.classList.add('confirm'); del.textContent = 'Wirklich löschen?'; hint.classList.remove('hidden'); return; }
+        snapshot();
+        state.categories = state.categories.filter(c => c.id !== cat.id);
+        state.tasks.forEach(t => { if (t.cat === cat.id) t.cat = null; });
+        save(); closeSheet(); render();
+        toast('Kategorie gelöscht', true);
+      });
+      actions.append(del);
+    }
+    actions.append(el('button', { class: 'btn ghost', text: 'Abbrechen', onclick: closeSheet }));
+
+    openSheet(el('div', {},
+      el('h3', { text: isNew ? 'Neue Kategorie' : 'Kategorie bearbeiten' }),
+      el('div', { class: 'fields' }, nameIn),
+      hint,
       actions
     ));
     if (isNew) setTimeout(() => nameIn.focus(), 60);
